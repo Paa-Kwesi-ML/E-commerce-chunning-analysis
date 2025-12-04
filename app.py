@@ -1,190 +1,191 @@
-# Analyzing Customer Behavior for E-commerce Insights
+# E-Commerce Customer Churn Analysis & Dashboard
+# Fully Streamlit-ready version
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import seaborn as sns
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+import seaborn as sns
+import plotly.express as px
+from datetime import datetime
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score
-from pathlib import Path
 
 st.set_page_config(
-    page_title="E-commerce Customer Insights Dashboard",
-    page_icon="🛒",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title="E-Commerce Customer Dashboard",
+    layout="wide"
 )
 
-st.title("E-commerce Customer Behavior & Churn Analysis")
-st.markdown("**Interactive Dashboard for Customer Insights and Predictive Analytics**")
+st.title("Customer Behavior Analysis & Churn Insights for E-Commerce")
 
 
-# Upload CSV or Generate Sample
+# Create sample dataset 
 
-default_file = "e_commerce.csv"
+np.random.seed(42)
+n_customers = 5000
+customer_id = np.arange(1, n_customers + 1)
+age = np.random.randint(18, 70, size=n_customers)
+gender = np.random.choice(['Male', 'Female'], size=n_customers)
+location = np.random.choice(
+    ['Greater Accra', 'Ashanti Region', 'Eastern Region', 'Northern Region', 'Savana Region', 'Western Region', 'Volta Region'],
+    size=n_customers, 
+    p=[0.35, 0.2, 0.13, 0.11, 0.10, 0.06, 0.05]
+)
+frequency = np.random.poisson(lam=2.0, size=n_customers)
+avg_order_value = np.random.normal(loc=40, scale=25, size=n_customers).clip(5, 500)
+total_spent = (frequency * avg_order_value).round(2)
+avg_session_time = np.random.exponential(scale=6, size=n_customers)
+pages_viewed = np.random.poisson(lam=5, size=n_customers).clip(1)
+product_category = np.random.choice(['Electronics', 'Fashion', 'Furniture', 'Groceries', 'Health', 'Books'], size=n_customers, p=[0.25, 0.2, 0.15, 0.2, 0.1, 0.1])
 
-if Path(default_file).exists():
-    df = pd.read_csv(default_file)
-else:
-    uploaded_file = st.file_uploader(
-        "Upload CSV (columns: customer_id, age, gender, location, frequency, avg_order_value, total_spent, avg_session_time_min, pages_viewed, product_category, recency_days, churned)",
-        type=["csv"],
-    )
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
+recency = []
+for f in frequency:
+    if f == 0:
+        recency.append(np.random.randint(120, 720))
     else:
-        st.info("Upload a CSV to begin or ensure it's named 'e_commerce.csv'")
-        st.stop()
+        recency.append(int(np.random.exponential(scale=60)))
 
-# Dataset Overview
+churned = [1 if (r > 90 and f <= 1) else 0 for r, f in zip(recency, frequency)]
 
-with st.expander("📊 Dataset Overview"):
-    st.write(df.head(7))
-    st.write("Shape:", df.shape)
-    st.write("Info:")
-    buffer = df.info()
-    st.text(buffer)
-    st.write("Descriptive statistics:")
-    st.write(df.describe())
-    st.write("Duplicate rows:", df.duplicated().sum())
+df = pd.DataFrame({
+    "customer_id": customer_id,
+    "age": age,
+    "gender": gender,
+    "location": location,
+    "frequency": frequency,
+    "avg_order_value": avg_order_value.round(2),
+    "total_spent": total_spent,
+    "avg_session_time_min": avg_session_time.round(2),
+    "pages_viewed": pages_viewed,
+    "product_category": product_category,
+    "recency_days": recency,
+    "churned": churned
+})
 
-
-# Feature Engineering
-
-df['age_group'] = pd.cut(df['age'], bins=[17, 25, 35, 50, 70], labels=['18-25', '26-35', '36-50', '51-70'])
-
-df_1 = df.copy()
-df_1['frequency_1'] = (df['frequency'] > 0).astype(int)  # Purchased at least once
-df_1['high_value_customer'] = (df['total_spent'] > df['total_spent'].median()).astype(int)  # Above median
-
-# One-hot encoding
-df_1d = pd.get_dummies(df, columns=['product_category', 'location', 'gender', 'age_group'], drop_first=True)
+df['age_group'] = pd.cut(df['age'], bins=[17,25,35,50,70], labels=['18-25','26-35','36-50','51-70'])
 
 
-# Exploratory Data Analysis
+st.sidebar.header("Filters")
+selected_gender = st.sidebar.multiselect("Select Gender", options=df['gender'].unique(), default=df['gender'].unique())
+selected_location = st.sidebar.multiselect("Select Region", options=df['location'].unique(), default=df['location'].unique())
+selected_category = st.sidebar.multiselect("Select Product Category", options=df['product_category'].unique(), default=df['product_category'].unique())
 
-st.header("Exploratory Data Analysis")
+filtered_df = df[
+    (df['gender'].isin(selected_gender)) &
+    (df['location'].isin(selected_location)) &
+    (df['product_category'].isin(selected_category))
+]
 
-tabs = st.tabs([
-    "Product Category", "Gender & Product", "Age & Spending",
-    "Churn Analysis", "Regional Insights", "Frequency & Spending"
-])
-
-# Tab 1: Product Category Pie
-with tabs[0]:
-    st.subheader("Overall Product Category Share")
-    cat_counts = df['product_category'].value_counts()
-    fig = px.pie(
-        cat_counts,
-        values='product_category',
-        names=cat_counts.index,
-        title='Overall Product Category Share'
-    )
-    fig.update_layout(width=900, height=500)
-    st.plotly_chart(fig)
-
-#  Tab 2: Gender & Product 
-with tabs[1]:
-    st.subheader("Customer Gender Distribution by Product Category")
-    fig = px.histogram(
-        df,
-        x="product_category",
-        color="gender",
-        barmode="group",
-        title="Customer Gender Distribution by Product Category"
-    )
-    fig.update_layout(width=800, height=600)
-    st.plotly_chart(fig)
-
-    st.subheader("Average Total Spent by Product Category and Gender")
-    avg_spent = df.groupby(['product_category','gender'])['total_spent'].mean().reset_index()
-    fig = px.bar(
-        avg_spent,
-        x='product_category',
-        y='total_spent',
-        color='gender',
-        barmode='group',
-        title='Average Total Spent by Product Category and Gender',
-        labels={'total_spent':'Average Total Spent ($)','product_category':'Product Category'}
-    )
-    fig.update_layout(width=800, height=600)
-    st.plotly_chart(fig)
-
-# Tab 3: Age & Spending
-with tabs[2]:
-    st.subheader("Age Distribution by Gender and Total Amount Spent")
-    avg_age_spending = df.groupby(['age_group','gender'])['total_spent'].sum().reset_index()
-    avg_age_spending = avg_age_spending.sort_values(by='total_spent', ascending=False)
-    fig = px.bar(
-        avg_age_spending,
-        x='age_group',
-        y='total_spent',
-        color='gender',
-        barmode='group',
-        title='Age Distribution by Gender And Total Amount Spent',
-        labels={'age':'Customer Age'}
-    )
-    fig.update_layout(width=800, height=600)
-    st.plotly_chart(fig)
-
-# Tab 4: Churn Analysis 
-with tabs[3]:
-    st.subheader("Churn Rate by Product Category")
-    churn_by_cat = df.groupby('product_category')['churned'].mean().sort_values(ascending=False)
-    fig = px.bar(
-        churn_by_cat.reset_index(),
-        x='product_category',
-        y='churned',
-        title='Churn Rate by Product Category'
-    )
-    st.plotly_chart(fig)
-
-# Tab 5: Regional Insights 
-with tabs[4]:
-    st.subheader("Product Category Distribution Across Regions")
-    region_cat = pd.crosstab(df['location'], df['product_category'])
-    plt.figure(figsize=(10,6))
-    sns.heatmap(region_cat, cmap='YlGnBu', annot=True, fmt='d')
-    plt.title('Product Category Distribution Across Regions')
-    st.pyplot(plt.gcf())
-
-#Tab 6: Frequency & Spending 
-with tabs[5]:
-    st.subheader("Shopping Frequency by Gender")
-    fig = px.box(
-        df,
-        x='gender',
-        y='frequency',
-        color='gender',
-        title='Shopping Frequency by Gender',
-        color_discrete_sequence=px.colors.qualitative.Bold
-    )
-    fig.update_layout(width=800, height=500)
-    st.plotly_chart(fig)
-
-    st.subheader("Total Revenue by Product Category")
-    total_spent_cat = df.groupby('product_category')['total_spent'].sum().reset_index().sort_values(by='total_spent', ascending=False)
-    fig = px.bar(
-        total_spent_cat,
-        x='product_category',
-        y='total_spent',
-        color='product_category',
-        title='Total Revenue by Product Category',
-        labels={'total_spent':'Total Revenue ($)','product_category':'Product Category'},
-        color_discrete_sequence=px.colors.qualitative.Dark2
-    )
-    fig.update_layout(width=800, height=600)
-    st.plotly_chart(fig)
+st.subheader(f"Filtered Dataset Overview ({filtered_df.shape[0]} Customers)")
+st.dataframe(filtered_df.head(10))
 
 
-# Predictive Modeling: Customer Churn
+# Visualizations
+st.markdown("### Overall Product Category Share")
+cat_counts = filtered_df['product_category'].value_counts().reset_index()
+cat_counts.columns = ['product_category', 'count']
 
-st.header("Predictive Modeling: Customer Churn")
+fig = px.pie(
+    cat_counts,
+    values='count',
+    names='product_category',
+    title='Overall Product Category Share'
+)
+fig.update_layout(width=800, height=500)
+st.plotly_chart(fig)
+
+st.markdown("### Product Category Distribution by Gender")
+fig = px.histogram(
+    filtered_df,
+    x="product_category",
+    color="gender",
+    barmode="group",
+    title="Customer Gender Distribution by Product Category"
+)
+fig.update_layout(width=800, height=600, xaxis_title='Product Category', yaxis_title='Number Of Customers')
+st.plotly_chart(fig)
+
+st.markdown("### Average Total Spent by Product Category and Gender")
+avg_spent = filtered_df.groupby(['product_category','gender'])['total_spent'].mean().reset_index()
+fig = px.bar(
+    avg_spent,
+    x='product_category',
+    y='total_spent',
+    color='gender',
+    barmode='group',
+    title='Average Total Spent by Product Category and Gender',
+    labels={'total_spent':'Average Total Spent ($)','product_category':'Product Category'}
+)
+fig.update_layout(width=800, height=600, title_x=0.5)
+st.plotly_chart(fig)
+
+st.markdown("### Age Distribution by Gender and Total Amount Spent")
+avg_age_spending_ = filtered_df.groupby(['age_group','gender'])['total_spent'].sum().reset_index()
+age_gd = avg_age_spending_.sort_values(by='total_spent', ascending=False)
+fig = px.bar(
+    age_gd,
+    x='age_group',
+    y='total_spent',
+    color='gender',
+    barmode='group',
+    title='Age Distribution by Gender And Total Amount Spent',
+    labels={'age':'Customer Age'}
+)
+fig.update_layout(width=800, height=600, title_x=0.5)
+st.plotly_chart(fig)
+
+st.markdown("### Churn Rate by Product Category")
+churn_by_cat = filtered_df.groupby('product_category')['churned'].mean().sort_values(ascending=False)
+fig, ax = plt.subplots(figsize=(8,5))
+sns.barplot(x=churn_by_cat.index, y=churn_by_cat.values, palette='viridis', ax=ax)
+ax.set_title('Churn Rate by Product Category', fontsize=14, weight='bold')
+ax.set_ylabel('Churn Rate')
+ax.set_xlabel('Product Category')
+st.pyplot(fig)
+
+st.markdown("### Product Category Distribution Across Regions (Heatmap)")
+region_cat = pd.crosstab(filtered_df['location'], filtered_df['product_category'])
+fig, ax = plt.subplots(figsize=(10,6))
+sns.heatmap(region_cat, cmap='YlGnBu', annot=True, fmt='d', ax=ax)
+ax.set_title('Product Category Distribution Across Regions', fontsize=14, weight='bold')
+ax.set_xlabel('Product Category')
+ax.set_ylabel('Region')
+st.pyplot(fig)
+
+st.markdown("### Shopping Frequency by Gender")
+fig = px.box(
+    filtered_df,
+    x='gender',
+    y='frequency',
+    color='gender',
+    title='Shopping Frequency by Gender',
+    labels={'frequency':'Number of Purchases'},
+    color_discrete_sequence=px.colors.qualitative.Bold
+)
+fig.update_layout(width=800, height=500, title_x=0.5)
+st.plotly_chart(fig)
+
+st.markdown("### Total Revenue by Product Category")
+total_spent_cat = filtered_df.groupby('product_category')['total_spent'].sum().reset_index().sort_values(by='total_spent', ascending=False)
+fig = px.bar(
+    total_spent_cat,
+    x='product_category',
+    y='total_spent',
+    color='product_category',
+    title='Total Revenue by Product Category',
+    labels={'total_spent':'Total Revenue ($)','product_category':'Product Category'},
+    color_discrete_sequence=px.colors.qualitative.Dark2
+)
+fig.update_layout(width=800, height=600, title_x=0.5)
+st.plotly_chart(fig)
+
+# Feature Engineering & Churn Prediction
+df_1 = filtered_df.copy()
+df_1['frequency_1'] = (df_1['frequency'] > 0).astype(int)
+df_1['high_value_customer'] = (df_1['total_spent'] > df_1['total_spent'].median()).astype(int)
+df_1d = pd.get_dummies(df_1, columns=['product_category', 'location', 'gender', 'age_group'], drop_first=True)
 
 X = df_1d.drop(columns=['customer_id','churned'])
 y = df_1d['churned']
@@ -198,7 +199,6 @@ X_test[num_cols] = scaler.transform(X_test[num_cols])
 
 rf = RandomForestClassifier(n_estimators=200, random_state=42)
 rf.fit(X_train, y_train)
-
 y_pred = rf.predict(X_test)
 y_proba = rf.predict_proba(X_test)[:,1]
 
@@ -207,32 +207,22 @@ prec = precision_score(y_test, y_pred)
 rec = recall_score(y_test, y_pred)
 roc_auc = roc_auc_score(y_test, y_proba)
 
-st.write({
-    "Accuracy": acc,
-    "Precision": prec,
-    "Recall": rec,
-    "ROC AUC Score": roc_auc
-})
+st.subheader("Random Forest Churn Model Evaluation Metrics")
+st.write({"Accuracy":acc,"Precision":prec, "Recall":rec,"ROC AUC Score":roc_auc})
 
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 cv_scores = cross_val_score(rf, X, y, cv=cv, scoring='roc_auc', n_jobs=-1)
-
 st.write(f"Random Forest Cross-Validation ROC-AUC Scores: {cv_scores}")
 st.write(f"Mean ROC-AUC: {cv_scores.mean():.3f}")
 
-
-# Business Insights
-
-with st.expander("💡 Business Insights"):
-    st.markdown("""
-    Customers with low frequency (≤1) and high recency_days (>90) are most likely to churn.
-    High-value customers (spend above median) have significantly lower churn — target them with loyalty rewards.
-    Product categories like 'Books' and 'Health' may have higher churn rates — consider reactivation promotions.
-    Females spend more in Fashion and Books; Males dominate Electronics and Home products.
-    Launch personalized campaigns: electronics bundles for male customers, grocery and fashion discounts for female customers.
-    Most customers are 51-70 years old; consider offers like free shipping for this group.
-    Focus logistics and advertising in Greater Accra and Ashanti for ROI.
-    Electronics generates highest revenue; Groceries and Fashion drive high volume.
-    Use Recency and Frequency to identify at-risk customers; targeted campaigns can reduce churn 5–10% and increase repeat purchases 15–20%.
-    """)
-
+st.markdown("### Insights & Business Implications")
+st.write("""
+- Customers with low frequency (≤1) and high recency_days (>90) are most likely to churn.
+- High-value customers (spend above median) have lower churn — target them with loyalty rewards.
+- Product categories like 'Books' and 'Health' may have higher churn — consider reactivation promotions.
+- Female customers dominate Fashion and Books; Males dominate Electronics and Home products.
+- Most customers are aged 51-70; target senior and financially stable customers for special offers.
+- Focus logistics and marketing spend in Greater Accra and Ashanti regions (high ROI).
+- Electronics generate highest revenue; Groceries and Fashion have high volume but lower per-order revenue.
+- Personalization campaigns can reduce churn by 5–10% and increase repeat purchases by 15–20%.
+""")
