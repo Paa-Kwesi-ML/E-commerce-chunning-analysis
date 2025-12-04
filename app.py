@@ -25,8 +25,8 @@ st.title("E-commerce Customer Behavior & Churn Analysis")
 
 # --------------------------
 # Upload CSV Option
-st.sidebar.header("Upload CSV Dataset")
-uploaded_file = st.sidebar.file_uploader("Choose your CSV file", type="csv")
+#st.sidebar.header("Upload CSV Dataset")
+#uploaded_file = st.sidebar.file_uploader("Choose your CSV file", type="csv")
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
